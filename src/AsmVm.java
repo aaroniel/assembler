@@ -4,6 +4,9 @@ import java.util.*;
 import java.util.stream.*;
 
 public class AsmVm {
+    // Параметры VM
+    static final int MEMORY_SIZE = 256;
+
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
             usage();
@@ -13,6 +16,13 @@ public class AsmVm {
         if ("assemble".equals(cmd)) {
             if (args.length != 3) { usage(); return; }
             assemble(Paths.get(args[1]), Paths.get(args[2]));
+        } else if ("run".equals(cmd)) {
+            if (args.length != 2 && args.length != 3) { usage(); return; }
+            Path dumpPath = null;
+            if (args.length == 3) {
+                dumpPath = Paths.get(args[2]);
+            }
+            runProgram(Paths.get(args[1]), dumpPath);
         } else {
             usage();
         }
@@ -142,10 +152,122 @@ public class AsmVm {
 
     static void putBitsCheck(long _dummy) { /* placeholder */ }
 
+    // ---------- Interpreter ----------
+    static void runProgram(Path bin, Path dumpPath) throws IOException {
+        byte[] all = Files.readAllBytes(bin);
+        if (all.length % 7 != 0) {
+            throw new IOException("Binary program size must be multiple of 7 bytes (one instruction). Found: " + all.length);
+        }
+        int instrCount = all.length / 7;
+        int[] memory = new int[MEMORY_SIZE];
+        // simple execution: sequential, no jumps (specification didn't include)
+        for (int i = 0; i < instrCount; i++) {
+            long word = 0;
+            for (int b = 0; b < 7; b++) {
+                word |= ( (long) (all[i*7 + b] & 0xFF) ) << (8*b); // little-endian
+            }
+            int opcode = (int)(word & 0x1F); // bits 0..4
+            switch (opcode) {
+                case 16: { // load
+                    int dest = (int)((word >> 5) & 0xF);
+                    int constField = (int)((word >> 9) & 0x3FF); // 10 bits
+                    int constant = signExtend(constField, 10);
+                    checkAddr(dest);
+                    memory[dest] = constant;
+                    System.out.printf("instr %d: load %d %d -> memory[%d]=%d%n", i, dest, constant, dest, memory[dest]);
+                    break;
+                }
+                case 17: { // read
+                    int dest = (int)((word >> 5) & 0xF);
+                    int src = (int)((word >> 9) & 0xF);
+                    int offField = (int)((word >> 13) & 0xFFFF);
+                    int offset = signExtend(offField, 16);
+                    int addr = memory[src] + offset;
+                    checkAddr(dest);
+                    checkAddr(addr);
+                    memory[dest] = memory[addr];
+                    System.out.printf("instr %d: read %d %d %d -> memory[%d]=memory[%d]=%d%n", i, dest, src, offset, dest, addr, memory[dest]);
+                    break;
+                }
+                case 9: { // write (indirect addressing)
+                    int regDest = (int)((word >> 5) & 0xF);   // register containing base address
+                    int regSrc  = (int)((word >> 9) & 0xF);   // register containing source address
+                    int offField = (int)((word >> 13) & 0xFFFF);
+                    int offset = signExtend(offField, 16);
+
+                    // Registers hold addresses
+                    checkAddr(regDest);
+                    checkAddr(regSrc);
+
+                    int baseAddr = memory[regDest];
+                    int srcAddr  = regSrc;
+
+                    checkAddr(baseAddr);
+                    checkAddr(srcAddr);
+
+                    int destAddr = baseAddr + offset;
+                    checkAddr(destAddr);
+
+                    memory[destAddr] = memory[srcAddr];
+
+                    System.out.printf(
+                            "instr %d: write %d %d %d -> memory[%d]=memory[%d]=%d%n",
+                            i, regDest, regSrc, offset, destAddr, srcAddr, memory[destAddr]
+                    );
+                    break;
+                }
+                case 0: { // pow
+                    int dest = (int)((word >> 5) & 0xF);
+                    int a = (int)((word >> 9) & 0xF);
+                    int b = (int)((word >> 13) & 0xF);
+                    int offField = (int)((word >> 17) & 0xFFFF);
+                    int offset = signExtend(offField, 16);
+                    int aidx = memory[a] + offset;
+                    checkAddr(dest);
+                    checkAddr(aidx);
+                    double res = Math.pow((double)memory[aidx], (double)b);
+                    long rval = (long) res;
+                    memory[dest] = (int) rval;
+                    System.out.printf("instr %d: pow %d %d %d %d -> memory[%d] = %d^%d = %d%n",
+                            i, dest, a, b, offset, dest, memory[aidx], memory[b], memory[dest]);
+                    break;
+                }
+                default:
+                    throw new IOException("Unknown opcode " + opcode + " at instruction " + i);
+            }
+        }
+
+        System.out.println("Execution finished. Non-zero memory cells:");
+        for (int i = 0; i < memory.length; i++) {
+            if (memory[i] != 0) System.out.printf("  [%d] = %d%n", i, memory[i]);
+        }
+        if (dumpPath != null) {
+            dumpMemoryXML(memory, dumpPath);
+            System.out.println("Memory dumped to XML file: " + dumpPath);
+        }
+    }
+
+    static void checkAddr(int a) {
+        if (a < 0 || a >= MEMORY_SIZE) throw new RuntimeException("Memory address out of range: " + a);
+    }
+
     // sign-extend value of width bits (bits<=32)
     static int signExtend(int value, int bits) {
         int shift = 32 - bits;
         return (value << shift) >> shift;
     }
 
+
+    static void dumpMemoryXML(int[] memory, Path dumpFile) throws IOException {
+        try (BufferedWriter writer = Files.newBufferedWriter(dumpFile)) {
+            writer.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+            writer.write("<memory>\n");
+            for (int i = 0; i < memory.length; i++) {
+                if (memory[i] != 0) {
+                    writer.write(String.format("  <cell address=\"%d\">%d</cell>\n", i, memory[i]));
+                }
+            }
+            writer.write("</memory>\n");
+        }
+    }
 }
