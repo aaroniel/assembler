@@ -117,6 +117,7 @@ public class AsmVm {
             for (byte[] b : encoded) os.write(b);
         }
         System.out.println("Assembled " + encoded.size() + " instructions to " + out);
+        System.out.println("Размер двоичного файла: " + encoded.size() * 7 + " байт");
     }
 
     // helper to produce 7 bytes little-endian from a 56-bit word
