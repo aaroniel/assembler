@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <memory>
-  <cell address="1">4</cell>
-  <cell address="2">2</cell>
-  <cell address="4">16</cell>
-  <cell address="5">8</cell>
+  <cell address="6">1</cell>
+  <cell address="7">4</cell>
+  <cell address="8">9</cell>
+  <cell address="9">16</cell>
+  <cell address="10">25</cell>
+  <cell address="11">36</cell>
+  <cell address="12">49</cell>
 </memory>
